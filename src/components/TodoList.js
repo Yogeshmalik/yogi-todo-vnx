@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import {
-  auth,
   db,
   addDoc,
   query,
@@ -11,120 +10,129 @@ import {
   updateDoc,
   collection,
 } from "../firebase";
+import { where } from "firebase/firestore";
 
 function TodoList({ user }) {
   const [tasks, setTasks] = useState([]);
   const [newTask, setNewTask] = useState("");
   const [taskDescription, setTaskDescription] = useState("");
   const [taggedUsers, setTaggedUsers] = useState([]);
-  const [tagInput, setTagInput] = useState("");
-  const [allUsers, setAllUsers] = useState([]);
+  // const [tagInput, setTagInput] = useState("");
+  // const [allUsers, setAllUsers] = useState([]);
+  const [shareTask, setShareTask] = useState("");
 
-  // Load all users from Firebase
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "users"), (snapshot) => {
-      const usersData = [];
-      snapshot.forEach((doc) => {
-        usersData.push({ id: doc.id, ...doc.data() });
-      });
-      setAllUsers(usersData);
-    });
+  // useEffect(() => {
+  //   const unsubscribe = onSnapshot(collection(db, "users"), (snapshot) => {
+  //     const usersData = [];
+  //     snapshot.forEach((doc) => {
+  //       usersData.push({ id: doc.id, ...doc.data() });
+  //     });
+  //     setAllUsers(usersData);
+  //   });
 
-    return () => {
-      unsubscribe();
-    };
-  }, []);
+  //   return () => {
+  //     unsubscribe();
+  //   };
+  // }, []);
 
   useEffect(() => {
     if (user) {
-      const q = query(
-        collection(db, "tasks", user.uid, "userTasks"),
-        orderBy("timestamp")
+      const userTasksQuery = query(
+        collection(db, "tasks"),
+        orderBy("timestamp"),
+        where("userId", "==", user.uid)
       );
 
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const tasksData = [];
+      const sharedTasksQuery = query(
+        collection(db, "tasks"),
+        where("shareTask", "==", user.email)
+      );
+
+      const userTasks = [];
+      const sharedTasks = [];
+
+      const unsubscribeUserTasks = onSnapshot(userTasksQuery, (snapshot) => {
+        userTasks.length = 0;
         snapshot.forEach((doc) => {
-          tasksData.push({ id: doc.id, ...doc.data() });
+          userTasks.push({ id: doc.id, ...doc.data() });
         });
-        setTasks(tasksData);
+        setTasks([...userTasks, ...sharedTasks]);
       });
 
+      const unsubscribeSharedTasks = onSnapshot(
+        sharedTasksQuery,
+        (snapshot) => {
+          sharedTasks.length = 0;
+          snapshot.forEach((doc) => {
+            sharedTasks.push({ id: doc.id, ...doc.data() });
+          });
+          setTasks([...userTasks, ...sharedTasks]);
+        }
+      );
+
       return () => {
-        unsubscribe();
+        unsubscribeUserTasks();
+        unsubscribeSharedTasks();
       };
     }
   }, [user]);
 
-  const taskData = {
-    text: newTask,
-    description: taskDescription,
-    timestamp: new Date(),
-    userId: user.uid,
-    completed: false,
-    taggedUsers: taggedUsers,
-  };
+  const addTask = async (e) => {
+    e.preventDefault();
 
-  const addTask = async () => {
-    try {
-      if (newTask && taskDescription) {
-        const userTasksRef = collection(db, "tasks", user.uid, "userTasks");
-        await addDoc(
-          userTasksRef,
-          taskData,
-          { merge: true },
-          orderBy("timestamp")
-        );
+    if (newTask && taskDescription) {
+      try {
+        const taggedUserEmails = taggedUsers.map((user) => user.email);
 
-        // Clear input fields and tagged users
+        await addDoc(collection(db, "tasks"), {
+          text: newTask,
+          description: taskDescription,
+          timestamp: new Date(),
+          userId: user.uid,
+          completed: false,
+          taggedUsers: taggedUserEmails,
+          shareTask: shareTask,
+        });
+
         setNewTask("");
         setTaskDescription("");
+        setShareTask("");
         setTaggedUsers([]);
 
-        console.log("Task added with ID: ", userTasksRef.id);
+        alert("Task added");
+        console.log(taggedUserEmails);
+        console.log(
+          "Task added= ",
+          newTask + " Description= ",
+          taskDescription
+        );
+      } catch (error) {
+        alert("Task not added");
+        console.error(error);
       }
-    } catch (error) {
-      alert("Task not added");
-      console.error(error);
     }
   };
 
   const deleteTask = async (taskId) => {
     try {
-      await deleteDoc(doc(db, "tasks", user.uid, "userTasks", taskId));
+      await deleteDoc(doc(db, "tasks", taskId));
+      alert("Task deleted");
     } catch (error) {
+      alert("Task not deleted");
       console.error(error);
     }
   };
 
   const toggleTask = async (taskId, completed) => {
     try {
-      await updateDoc(doc(db, "tasks", user.uid, "userTasks", taskId), {
+      await updateDoc(doc(db, "tasks", taskId), {
         completed: !completed,
       });
+      alert("Task Toggled!");
     } catch (error) {
+      alert("Task not Toggled!");
       console.error(error);
     }
-  };
-
-  const handleTagInputChange = (e) => {
-    const value = e.target.value;
-    setTagInput(value);
-
-    // users based on input
-    const filteredUsers = allUsers.filter(
-      (user) =>
-        user.email.toLowerCase().includes(value.toLowerCase()) &&
-        user.uid !== auth.currentUser.uid
-    );
-    setTaggedUsers(filteredUsers);
-  };
-
-  const handleTagUser = (selectedUser) => {
-    // tagged users list
-    setTaggedUsers([...taggedUsers, selectedUser]);
-
-    setTagInput("");
   };
 
   return (
@@ -133,7 +141,6 @@ function TodoList({ user }) {
       <h3 className="text-xl font-semibold mb-2">Your Tasks:</h3>
       <ul className="list-disc px-3 sm:px-10">
         {tasks.map((task, index) => (
-          // <li key={task.id} className="flex items-center justify-between py-2">
           <li
             key={task.id}
             className={`text-lg font-bold flex items-center justify-between p-2 rounded-lg my-2 
@@ -160,6 +167,11 @@ function TodoList({ user }) {
               <p className="text-gray-800 font-normal text-left pl-6">
                 {task.description}
               </p>
+              {task.shareTask && (
+                <p className="text-gray-400 text-sm font-normal text-left pl-6">
+                  Shared with: {task.shareTask}
+                </p>
+              )}
             </div>
             <button
               className="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600"
@@ -170,10 +182,11 @@ function TodoList({ user }) {
           </li>
         ))}
       </ul>
-      <form required className="mt-4 px-2 sm:px-10 ">
+      <form type='submit' required className="mt-4 px-2 sm:px-10 ">
         <input
           type="text"
           placeholder="New Task"
+          name="newTask"
           className="border rounded px-2 py-1 w-full"
           value={newTask}
           onChange={(e) => setNewTask(e.target.value)}
@@ -181,6 +194,7 @@ function TodoList({ user }) {
         />
         <textarea
           placeholder="Task Description"
+          name="taskDescription"
           className="border rounded px-2 py-1 w-full mt-2"
           value={taskDescription}
           onChange={(e) => setTaskDescription(e.target.value)}
@@ -188,20 +202,19 @@ function TodoList({ user }) {
         ></textarea>
         <div className="mt-2">
           <input
-            type="text"
-            placeholder="Tag Users (@username)"
+            type="email"
+            placeholder="Enter their Email to Share Task"
+            name="shareTask"
             className="border rounded px-2 py-1 w-full"
-            value={tagInput}
-            onChange={handleTagInputChange}
+            value={shareTask}
+            onChange={(e) => setShareTask(e.target.value)}
           />
           <div className="mt-2 space-y-2">
-            {taggedUsers.map((taggedUser) => (
-              <div key={taggedUser.id} className="flex items-center">
-                <span className="text-blue-500" onChange={handleTagUser}>
-                  @{taggedUser.email}
-                </span>
+            {shareTask && (
+              <div className="flex items-center">
+                <span className="text-blue-500">@{shareTask}</span>
               </div>
-            ))}
+            )}
           </div>
         </div>
         <button
